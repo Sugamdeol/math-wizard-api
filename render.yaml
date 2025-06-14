@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: mathwiz-api
+    env: python
+    plan: free # Important: use the free instance type
+    repo: https://github.com/YOUR_USERNAME/YOUR_REPO_NAME # Change this to your repo URL
+    branch: main # Or whatever your default branch is
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn -w 4 -k uvicorn.workers.UvicornWorker app:app"
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: API_KEY
+        generateValue: true # Let Render securely generate a random API key
+      - key: MPLCONFIGDIR # Required for Matplotlib on some read-only filesystems
+        value: /tmp/matplotlib
