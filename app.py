@@ -1,5 +1,5 @@
 # app.py
-# Main file for the MathWiz API
+# MathWiz API v1.2.0 - Final Consolidated Version
 
 import os
 import uuid
@@ -8,11 +8,9 @@ import io
 
 # Core Frameworks
 from fastapi import FastAPI, Request, HTTPException, Security, Depends
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
-
-# --- THIS IS THE NEW IMPORT ---
 from fastapi.middleware.cors import CORSMiddleware
 
 # Math & Plotting Libraries
@@ -20,267 +18,248 @@ import sympy
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend for server
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 # --- App Setup & Configuration ---
-
 app = FastAPI(
     title="MathWiz API",
-    description="A REST API to solve mathematical expressions, explain steps, plot graphs, and much more. Like WolframAlpha, but in an API.",
-    version="1.0.1", # Incremented version
+    description="An advanced REST API to solve equations, perform calculus, plot 2D/3D graphs, handle matrices, and more.",
+    version="1.2.0",
 )
 
-# --- CORS (Cross-Origin Resource Sharing) Middleware ---
-# This is the crucial fix. It allows browser-based clients (like the HTML test page)
-# to communicate with your API from different origins.
-
-origins = [
-    "*"  # The wildcard '*' allows all origins. For a public API, this is often fine.
-    # For a more secure setup, you might restrict it to specific domains, e.g.:
-    # "https://www.yourfrontend.com",
-    # "http://localhost:3000",
-]
-
+# --- CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allow all headers, including Content-Type and X-API-KEY
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+# --- Professional Error Handling ---
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, "error": exc.detail},
+    )
 
-# Create directories for static files if they don't exist
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "error": f"An unexpected server error occurred: {type(exc).__name__}: {exc}"},
+    )
+
+# --- Directory and API Key Setup ---
 os.makedirs("static/plots", exist_ok=True)
 os.makedirs("static/latex", exist_ok=True)
-
-# --- API Key Authentication ---
-
 API_KEY = os.environ.get("API_KEY", "your-secret-key-for-local-dev")
 API_KEY_NAME = "X-API-KEY"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 async def get_api_key(api_key_header: str = Security(api_key_header)):
-    """Dependency to check for API key in the header."""
     if api_key_header == API_KEY:
         return api_key_header
-    else:
-        raise HTTPException(status_code=403, detail="Could not validate credentials")
+    raise HTTPException(status_code=403, detail="Could not validate credentials")
 
-# --- Pydantic Models for Input Validation ---
-
+# --- Pydantic Models ---
 class ExpressionInput(BaseModel):
-    expression: str = Field(..., example="3 * (x + 2)", title="A mathematical expression string.")
+    expression: str
 
 class EquationInput(BaseModel):
-    equation: str = Field(..., example="x**2 - 4 = 0", title="An algebraic equation with an equals sign.")
+    equation: str
 
 class DifferentiateInput(BaseModel):
-    expression: str = Field(..., example="x**2 + sin(x)", title="The function to differentiate.")
-    variable: str = Field("x", example="x", title="The variable to differentiate with respect to.")
+    expression: str
+    variable: str = "x"
 
 class WordProblemInput(BaseModel):
-    question: str = Field(..., example="A car travels 250 km in 5 hours. What is its speed?", title="A math word problem in English.")
+    question: str
 
 class MCQInput(BaseModel):
-    question: str = Field(..., example="If x = 5, what is the value of x^2 + 3*x - 10?", title="A multiple-choice question.")
-    options: list[str] = Field(..., example=["20", "25", "30", "35"], title="A list of possible answers as strings.")
+    question: str
+    options: list[str]
 
 class LatexInput(BaseModel):
-    latex: str = Field(..., example=r"\frac{d}{dx} (x^2 + \sin(x)) = 2x + \cos(x)", title="A LaTeX mathematical string.")
+    latex: str
 
 class InequalityInput(BaseModel):
-    inequality: str = Field(..., example="x**2 - 9 > 0", title="A mathematical inequality.")
+    inequality: str
+
+class DefiniteIntegralInput(BaseModel):
+    expression: str
+    variable: str = "x"
+    lower_limit: float
+    upper_limit: float
+
+class MatrixInput(BaseModel):
+    matrix: list[list[float]]
+    operation: str
 
 # --- Helper Functions ---
-
 def parse_safe_expr(expr_str: str):
-    """Safely parse a mathematical expression string using sympy."""
     try:
         transformations = (standard_transformations + (implicit_multiplication_application,))
         return parse_expr(expr_str, transformations=transformations, evaluate=False)
-    except (SyntaxError, TypeError, sympy.SympifyError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid mathematical expression: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid mathematical expression: '{expr_str}'. Error: {e}")
 
 def get_base_url(request: Request):
-    """Constructs the base URL for generating static file links."""
     return str(request.base_url)
 
 # --- API Endpoints ---
-
 @app.get("/", tags=["General"])
 async def root():
-    """Welcome endpoint with a link to the documentation."""
-    return {
-        "message": "Welcome to the MathWiz API!",
-        "documentation": "/docs"
-    }
+    return {"message": "Welcome to MathWiz API v1.2", "documentation": "/docs"}
 
 @app.post("/evaluate", tags=["Core Math"], dependencies=[Depends(get_api_key)])
 async def evaluate_expression(data: ExpressionInput):
-    """Solves a simple or complex mathematical expression."""
-    try:
-        parsed_expr = parse_safe_expr(data.expression)
-        result = parsed_expr.evalf()
-        return {"result": float(result)}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    parsed_expr = parse_safe_expr(data.expression)
+    result = parsed_expr.evalf()
+    return {"result": float(result)}
 
 @app.post("/solve-equation", tags=["Algebra"], dependencies=[Depends(get_api_key)])
 async def solve_equation_endpoint(data: EquationInput):
-    """Solves algebraic equations for a variable (usually 'x')."""
-    try:
-        if "=" not in data.equation:
-            raise HTTPException(status_code=400, detail="Invalid equation. Please include an equals sign '='.")
-        lhs, rhs = map(parse_safe_expr, data.equation.split('='))
-        equation = sympy.Eq(lhs, rhs)
-        solutions = sympy.solve(equation)
-        formatted_solutions = [str(s.evalf()) for s in solutions]
-        steps = [
-            f"Given equation: {sympy.pretty(equation)}",
-            f"Rearranging to solve for the variable.",
-            f"The solutions are: {', '.join(formatted_solutions)}"
-        ]
-        return {"solutions": formatted_solutions, "steps": steps}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not solve equation: {str(e)}")
+    if "=" not in data.equation:
+        raise HTTPException(status_code=400, detail="Invalid equation. Must include an '=' sign.")
+    
+    x = sympy.symbols('x')
+    lhs_str, rhs_str = data.equation.split('=', 1)
+    lhs = parse_safe_expr(lhs_str)
+    rhs = parse_safe_expr(rhs_str)
+    
+    equation = sympy.Eq(lhs - rhs, 0)
+    solutions = sympy.solve(equation, x)
+    formatted_solutions = [str(s.evalf(4)) for s in solutions]
+    
+    steps = [f"Original Equation: {sympy.pretty(sympy.Eq(lhs, rhs))}"]
+    steps.append(f"Rearranged Form: {sympy.pretty(equation)}")
+
+    poly = sympy.Poly(equation.lhs, x)
+    if poly.degree() == 2:
+        a, b, c = poly.all_coeffs()
+        steps.append("The equation is a quadratic in the form ax^2 + bx + c = 0.")
+        steps.append(f"Coefficients: a={a}, b={b}, c={c}")
+        discriminant = b**2 - 4*a*c
+        steps.append(f"Calculate discriminant (Δ = b^2 - 4ac): {b**2} - 4*({a})*({c}) = {discriminant}")
+        if discriminant >= 0:
+            steps.append("Using the quadratic formula: x = (-b ± sqrt(Δ)) / 2a")
+    steps.append(f"Final Solutions: {', '.join(formatted_solutions)}")
+
+    return {"solutions": formatted_solutions, "steps": steps}
 
 @app.post("/plot-graph", tags=["Graphing"], dependencies=[Depends(get_api_key)])
 async def plot_graph(data: ExpressionInput, request: Request):
-    """Generates and returns a URL to a plot of a 2D function (e.g., y = x**2)."""
-    try:
-        x = sympy.symbols('x')
-        expr = parse_safe_expr(data.expression)
-        func = sympy.lambdify(x, expr, 'numpy')
-        x_vals = np.linspace(-10, 10, 400)
-        y_vals = func(x_vals)
-        plt.figure(figsize=(8, 6))
-        plt.plot(x_vals, y_vals, label=f"y = {data.expression}")
-        plt.title(f"Graph of y = {data.expression}")
-        plt.xlabel("x-axis")
-        plt.ylabel("y-axis")
-        plt.grid(True)
-        plt.legend()
-        filename = f"{uuid.uuid4()}.png"
-        filepath = os.path.join("static/plots", filename)
-        plt.savefig(filepath)
-        plt.close()
-        image_url = f"{get_base_url(request)}static/plots/{filename}"
-        return {"image_url": image_url}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not plot graph: {str(e)}")
+    x = sympy.symbols('x')
+    expr = parse_safe_expr(data.expression)
+    func = sympy.lambdify(x, expr, 'numpy')
+    x_vals = np.linspace(-10, 10, 400)
+    y_vals = func(x_vals)
+    plt.figure(figsize=(8, 6))
+    plt.plot(x_vals, y_vals, label=f"y = {data.expression}")
+    plt.title(f"Graph of y = {data.expression}"); plt.xlabel("x-axis"); plt.ylabel("y-axis"); plt.grid(True); plt.legend()
+    filename = f"{uuid.uuid4()}.png"; filepath = os.path.join("static/plots", filename)
+    plt.savefig(filepath); plt.close()
+    return {"image_url": f"{get_base_url(request)}static/plots/{filename}"}
+
+@app.post("/plot-graph-3d", tags=["Graphing"], dependencies=[Depends(get_api_key)])
+async def plot_graph_3d(data: ExpressionInput, request: Request):
+    x, y = sympy.symbols('x y')
+    expr = parse_safe_expr(data.expression)
+    func = sympy.lambdify((x, y), expr, 'numpy')
+    x_vals = np.linspace(-10, 10, 50); y_vals = np.linspace(-10, 10, 50)
+    X, Y = np.meshgrid(x_vals, y_vals); Z = func(X, Y)
+    fig = plt.figure(figsize=(10, 8)); ax = fig.add_subplot(111, projection='3d')
+    ax.plot_surface(X, Y, Z, cmap='viridis')
+    ax.set_xlabel('x-axis'); ax.set_ylabel('y-axis'); ax.set_zlabel('z-axis')
+    ax.set_title(f"3D Plot of z = {data.expression}", pad=20)
+    filename = f"{uuid.uuid4()}.png"; filepath = os.path.join("static/plots", filename)
+    plt.savefig(filepath); plt.close()
+    return {"image_url": f"{get_base_url(request)}static/plots/{filename}"}
 
 @app.post("/differentiate", tags=["Calculus"], dependencies=[Depends(get_api_key)])
 async def differentiate_expression(data: DifferentiateInput):
-    """Calculates the derivative of an expression with respect to a variable."""
-    try:
-        expr = parse_safe_expr(data.expression)
-        variable = sympy.symbols(data.variable)
-        derivative = sympy.diff(expr, variable)
-        return {"result": str(derivative)}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not differentiate: {str(e)}")
+    expr = parse_safe_expr(data.expression)
+    variable = sympy.symbols(data.variable)
+    derivative = sympy.diff(expr, variable)
+    return {"result": str(derivative)}
 
 @app.post("/integrate", tags=["Calculus"], dependencies=[Depends(get_api_key)])
 async def integrate_expression(data: ExpressionInput):
-    """Calculates the indefinite integral of an expression."""
-    try:
-        expr = parse_safe_expr(data.expression)
-        variable = sympy.symbols('x') 
-        integral = sympy.integrate(expr, variable)
-        return {"indefinite_integral": f"{str(integral)} + C"}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not integrate: {str(e)}")
+    expr = parse_safe_expr(data.expression)
+    variable = sympy.symbols('x') 
+    integral = sympy.integrate(expr, variable)
+    return {"indefinite_integral": f"{str(integral)} + C"}
 
-@app.post("/word-to-equation", tags=["Problem Solving"], dependencies=[Depends(get_api_key)])
-async def word_to_equation_endpoint(data: WordProblemInput):
-    """(Simplified) Converts a simple word problem into a math equation and solves it."""
-    question = data.question.lower()
-    if "speed" in question and "km" in question and "hour" in question:
-        numbers = re.findall(r'\d+\.?\d*', data.question)
-        if len(numbers) >= 2:
-            distance, time = float(numbers[0]), float(numbers[1])
-            equation = f"speed = {distance} / {time}"
-            answer = distance / time
-            return {"equation": equation, "answer": f"{answer} km/hr"}
-    if "what is" in question:
-        expression_part = question.replace("what is", "").replace("?", "").strip()
-        expression_part = expression_part.replace("plus", "+").replace("minus", "-").replace("times", "*").replace("divided by", "/")
-        try:
-            result = sympy.sympify(expression_part).evalf()
-            return {"equation": expression_part, "answer": str(result)}
-        except Exception:
-            pass
-    return JSONResponse(
-        status_code=400,
-        content={"error": "Could not understand the word problem. This endpoint has limited capabilities."}
-    )
+@app.post("/definite-integral", tags=["Calculus"], dependencies=[Depends(get_api_key)])
+async def definite_integral(data: DefiniteIntegralInput):
+    expr = parse_safe_expr(data.expression)
+    variable = sympy.symbols(data.variable)
+    result = sympy.integrate(expr, (variable, data.lower_limit, data.upper_limit))
+    return {"result": str(result.evalf(6))}
 
 @app.post("/mcq-solver", tags=["Problem Solving"], dependencies=[Depends(get_api_key)])
 async def mcq_solver(data: MCQInput):
-    """Solves a mathematical MCQ by evaluating the question and matching the answer."""
-    match = re.search(r'(?:what is|value of|evaluate|solve)\s*(.*)\?', data.question, re.IGNORECASE)
+    match = re.search(r'(?:what is|value of|evaluate|solve|is)\s*(.*)\?', data.question, re.IGNORECASE)
     if not match:
         raise HTTPException(status_code=400, detail="Could not extract a mathematical expression from the question.")
     expression_str = match.group(1).strip()
     var_assignments = re.findall(r'(\w+)\s*=\s*(-?\d+\.?\d*)', data.question)
     subs_dict = {sympy.symbols(var): float(val) for var, val in var_assignments}
-    try:
-        expr = parse_safe_expr(expression_str)
-        if subs_dict:
-            result = expr.subs(subs_dict).evalf()
-        else:
-            result = expr.evalf()
-        for i, option in enumerate(data.options):
-            try:
-                if abs(float(option) - float(result)) < 1e-9:
-                    option_letter = chr(ord('A') + i)
-                    return {"answer": option, "option": option_letter}
-            except ValueError:
-                continue
-        return JSONResponse(
-            status_code=404,
-            content={"error": "Could not find a matching answer in the options provided."}
-        )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error processing MCQ: {str(e)}")
-
-@app.post("/latex-to-image", tags=["Utility"], dependencies=[Depends(get_api_key)])
-async def latex_to_image(data: LatexInput, request: Request):
-    """Converts a LaTeX string into a clean image and returns its URL."""
-    try:
-        fig, ax = plt.subplots(figsize=(6, 1), dpi=300)
-        ax.text(0.5, 0.5, f"${data.latex}$", size=15, ha='center', va='center')
-        ax.axis('off')
-        filename = f"{uuid.uuid4()}.png"
-        filepath = os.path.join("static/latex", filename)
-        plt.savefig(filepath, format='png', bbox_inches='tight', pad_inches=0.1, transparent=True)
-        plt.close(fig)
-        image_url = f"{get_base_url(request)}static/latex/{filename}"
-        return {"image_url": image_url}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to render LaTeX: {e}")
+    expr = parse_safe_expr(expression_str)
+    result = expr.subs(subs_dict).evalf() if subs_dict else expr.evalf()
+    for i, option_str in enumerate(data.options):
+        try:
+            if abs(float(option_str) - float(result)) < 1e-9:
+                return {"answer": option_str, "option": chr(ord('A') + i), "calculated_result": float(result)}
+        except ValueError: continue
+    raise HTTPException(status_code=404, detail=f"Could not find a matching answer. Calculated result was {result}, but it's not in the options.")
 
 @app.post("/inequality-solver", tags=["Algebra"], dependencies=[Depends(get_api_key)])
 async def solve_inequality(data: InequalityInput):
-    """Solves univariate inequalities."""
+    x = sympy.symbols('x')
+    inequality_expr = parse_safe_expr(data.inequality)
+    solution = sympy.solve_univariate_inequality(inequality_expr, x, relational=False)
     try:
-        x = sympy.symbols('x')
-        inequality = parse_safe_expr(data.inequality)
-        if not isinstance(inequality, sympy.logic.relational.Relational):
-             raise ValueError("Input is not a valid inequality (e.g., x**2 > 4).")
-        solution = sympy.solve_univariate_inequality(inequality, x, relational=False)
-        steps = [
-            f"Given inequality: {inequality}",
-            "Finding critical points by solving the corresponding equation.",
-            "Testing intervals around the critical points.",
-            f"The final solution set is: {solution}"
-        ]
-        return {"solution": str(solution), "steps": steps}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not solve inequality: {str(e)}")
+        equality = sympy.Eq(inequality_expr.lhs, inequality_expr.rhs)
+        critical_points = sympy.solve(equality, x)
+        points_str = ", ".join([str(p.evalf(3)) for p in critical_points])
+        steps = [f"Given inequality: {inequality_expr}", f"Critical points found at: x = {points_str}", f"The final solution set is: {solution}"]
+    except Exception:
+        steps = [f"Given inequality: {inequality_expr}", f"The final solution set is: {solution}"]
+    return {"solution": str(solution), "steps": steps}
 
+@app.post("/matrix-operations", tags=["Linear Algebra"], dependencies=[Depends(get_api_key)])
+async def matrix_operations(data: MatrixInput):
+    matrix = sympy.Matrix(data.matrix)
+    operation = data.operation.lower()
+    if not matrix.is_square: raise HTTPException(status_code=400, detail="Operation requires a square matrix.")
+    if operation == "determinant":
+        return {"operation": "determinant", "result": str(matrix.det().evalf())}
+    elif operation == "inverse":
+        if matrix.det() == 0: raise HTTPException(status_code=400, detail="Matrix is singular and cannot be inverted.")
+        return {"operation": "inverse", "result": np.array(matrix.inv().evalf()).tolist()}
+    elif operation == "eigenvalues":
+        eigenvals = matrix.eigenvals()
+        result = {str(k.evalf(4)): v for k, v in eigenvals.items()}
+        return {"operation": "eigenvalues", "result": result}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid operation. Choose from: determinant, inverse, eigenvalues.")
 
+@app.post("/latex-to-image", tags=["Utility"], dependencies=[Depends(get_api_key)])
+async def latex_to_image(data: LatexInput, request: Request):
+    fig, ax = plt.subplots(figsize=(6, 1), dpi=300)
+    ax.text(0.5, 0.5, f"${data.latex}$", size=15, ha='center', va='center')
+    ax.axis('off')
+    filename = f"{uuid.uuid4()}.png"
+    filepath = os.path.join("static/latex", filename)
+    plt.savefig(filepath, format='png', bbox_inches='tight', pad_inches=0.1, transparent=True)
+    plt.close(fig)
+    return {"image_url": f"{get_base_url(request)}static/latex/{filename}"}
+
+# --- Static File Serving ---
 from fastapi.staticfiles import StaticFiles
 app.mount("/static", StaticFiles(directory="static"), name="static")
