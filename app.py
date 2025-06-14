@@ -12,6 +12,9 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
 
+# --- THIS IS THE NEW IMPORT ---
+from fastapi.middleware.cors import CORSMiddleware
+
 # Math & Plotting Libraries
 import sympy
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
@@ -25,8 +28,28 @@ import matplotlib.pyplot as plt
 app = FastAPI(
     title="MathWiz API",
     description="A REST API to solve mathematical expressions, explain steps, plot graphs, and much more. Like WolframAlpha, but in an API.",
-    version="1.0.0",
+    version="1.0.1", # Incremented version
 )
+
+# --- CORS (Cross-Origin Resource Sharing) Middleware ---
+# This is the crucial fix. It allows browser-based clients (like the HTML test page)
+# to communicate with your API from different origins.
+
+origins = [
+    "*"  # The wildcard '*' allows all origins. For a public API, this is often fine.
+    # For a more secure setup, you might restrict it to specific domains, e.g.:
+    # "https://www.yourfrontend.com",
+    # "http://localhost:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allow all headers, including Content-Type and X-API-KEY
+)
+
 
 # Create directories for static files if they don't exist
 os.makedirs("static/plots", exist_ok=True)
@@ -75,12 +98,10 @@ class InequalityInput(BaseModel):
 def parse_safe_expr(expr_str: str):
     """Safely parse a mathematical expression string using sympy."""
     try:
-        # These transformations allow for things like "2x" to be parsed as "2*x"
         transformations = (standard_transformations + (implicit_multiplication_application,))
         return parse_expr(expr_str, transformations=transformations, evaluate=False)
     except (SyntaxError, TypeError, sympy.SympifyError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid mathematical expression: {str(e)}")
-
 
 def get_base_url(request: Request):
     """Constructs the base URL for generating static file links."""
@@ -112,21 +133,15 @@ async def solve_equation_endpoint(data: EquationInput):
     try:
         if "=" not in data.equation:
             raise HTTPException(status_code=400, detail="Invalid equation. Please include an equals sign '='.")
-
         lhs, rhs = map(parse_safe_expr, data.equation.split('='))
         equation = sympy.Eq(lhs, rhs)
         solutions = sympy.solve(equation)
-        
-        # Format solutions nicely
         formatted_solutions = [str(s.evalf()) for s in solutions]
-
-        # Basic steps (can be enhanced)
         steps = [
             f"Given equation: {sympy.pretty(equation)}",
             f"Rearranging to solve for the variable.",
             f"The solutions are: {', '.join(formatted_solutions)}"
         ]
-
         return {"solutions": formatted_solutions, "steps": steps}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not solve equation: {str(e)}")
@@ -135,17 +150,11 @@ async def solve_equation_endpoint(data: EquationInput):
 async def plot_graph(data: ExpressionInput, request: Request):
     """Generates and returns a URL to a plot of a 2D function (e.g., y = x**2)."""
     try:
-        # Assume the expression is in terms of 'x' for a 'y = f(x)' plot
         x = sympy.symbols('x')
         expr = parse_safe_expr(data.expression)
-        
-        # Create a numerical function from the symbolic expression
         func = sympy.lambdify(x, expr, 'numpy')
-
         x_vals = np.linspace(-10, 10, 400)
         y_vals = func(x_vals)
-
-        # Plotting
         plt.figure(figsize=(8, 6))
         plt.plot(x_vals, y_vals, label=f"y = {data.expression}")
         plt.title(f"Graph of y = {data.expression}")
@@ -153,13 +162,10 @@ async def plot_graph(data: ExpressionInput, request: Request):
         plt.ylabel("y-axis")
         plt.grid(True)
         plt.legend()
-        
-        # Save plot to a unique file
         filename = f"{uuid.uuid4()}.png"
         filepath = os.path.join("static/plots", filename)
         plt.savefig(filepath)
-        plt.close() # Important to free up memory
-
+        plt.close()
         image_url = f"{get_base_url(request)}static/plots/{filename}"
         return {"image_url": image_url}
     except Exception as e:
@@ -181,7 +187,6 @@ async def integrate_expression(data: ExpressionInput):
     """Calculates the indefinite integral of an expression."""
     try:
         expr = parse_safe_expr(data.expression)
-        # Assume integration with respect to 'x' if not specified
         variable = sympy.symbols('x') 
         integral = sympy.integrate(expr, variable)
         return {"indefinite_integral": f"{str(integral)} + C"}
@@ -190,12 +195,8 @@ async def integrate_expression(data: ExpressionInput):
 
 @app.post("/word-to-equation", tags=["Problem Solving"], dependencies=[Depends(get_api_key)])
 async def word_to_equation_endpoint(data: WordProblemInput):
-    """
-    (Simplified) Converts a simple word problem into a math equation and solves it.
-    This is a rule-based example. A full implementation would require a powerful NLP model.
-    """
+    """(Simplified) Converts a simple word problem into a math equation and solves it."""
     question = data.question.lower()
-    # Example: "A car travels 100 km in 2 hours. Find speed."
     if "speed" in question and "km" in question and "hour" in question:
         numbers = re.findall(r'\d+\.?\d*', data.question)
         if len(numbers) >= 2:
@@ -203,8 +204,6 @@ async def word_to_equation_endpoint(data: WordProblemInput):
             equation = f"speed = {distance} / {time}"
             answer = distance / time
             return {"equation": equation, "answer": f"{answer} km/hr"}
-
-    # Example: "What is 5 plus 10?"
     if "what is" in question:
         expression_part = question.replace("what is", "").replace("?", "").strip()
         expression_part = expression_part.replace("plus", "+").replace("minus", "-").replace("times", "*").replace("divided by", "/")
@@ -213,7 +212,6 @@ async def word_to_equation_endpoint(data: WordProblemInput):
             return {"equation": expression_part, "answer": str(result)}
         except Exception:
             pass
-
     return JSONResponse(
         status_code=400,
         content={"error": "Could not understand the word problem. This endpoint has limited capabilities."}
@@ -222,34 +220,25 @@ async def word_to_equation_endpoint(data: WordProblemInput):
 @app.post("/mcq-solver", tags=["Problem Solving"], dependencies=[Depends(get_api_key)])
 async def mcq_solver(data: MCQInput):
     """Solves a mathematical MCQ by evaluating the question and matching the answer."""
-    # Find the mathematical expression in the question, e.g., after "value of" or "what is"
     match = re.search(r'(?:what is|value of|evaluate|solve)\s*(.*)\?', data.question, re.IGNORECASE)
     if not match:
         raise HTTPException(status_code=400, detail="Could not extract a mathematical expression from the question.")
-    
     expression_str = match.group(1).strip()
-    
-    # Extract variable assignments like "If x = 5,"
     var_assignments = re.findall(r'(\w+)\s*=\s*(-?\d+\.?\d*)', data.question)
     subs_dict = {sympy.symbols(var): float(val) for var, val in var_assignments}
-    
     try:
         expr = parse_safe_expr(expression_str)
         if subs_dict:
             result = expr.subs(subs_dict).evalf()
         else:
             result = expr.evalf()
-
-        # Compare result with options
         for i, option in enumerate(data.options):
             try:
-                # Use a small tolerance for floating point comparisons
                 if abs(float(option) - float(result)) < 1e-9:
                     option_letter = chr(ord('A') + i)
                     return {"answer": option, "option": option_letter}
             except ValueError:
-                continue # Option is not a number
-
+                continue
         return JSONResponse(
             status_code=404,
             content={"error": "Could not find a matching answer in the options provided."}
@@ -262,17 +251,12 @@ async def latex_to_image(data: LatexInput, request: Request):
     """Converts a LaTeX string into a clean image and returns its URL."""
     try:
         fig, ax = plt.subplots(figsize=(6, 1), dpi=300)
-        # Use matplotlib's mathtext for rendering - no LaTeX installation needed
         ax.text(0.5, 0.5, f"${data.latex}$", size=15, ha='center', va='center')
         ax.axis('off')
-
         filename = f"{uuid.uuid4()}.png"
         filepath = os.path.join("static/latex", filename)
-
-        # Save with a transparent background
         plt.savefig(filepath, format='png', bbox_inches='tight', pad_inches=0.1, transparent=True)
         plt.close(fig)
-
         image_url = f"{get_base_url(request)}static/latex/{filename}"
         return {"image_url": image_url}
     except Exception as e:
@@ -284,31 +268,19 @@ async def solve_inequality(data: InequalityInput):
     try:
         x = sympy.symbols('x')
         inequality = parse_safe_expr(data.inequality)
-        
-        # Check if it's a valid relational (inequality) type
         if not isinstance(inequality, sympy.logic.relational.Relational):
              raise ValueError("Input is not a valid inequality (e.g., x**2 > 4).")
-
         solution = sympy.solve_univariate_inequality(inequality, x, relational=False)
-        
         steps = [
             f"Given inequality: {inequality}",
             "Finding critical points by solving the corresponding equation.",
             "Testing intervals around the critical points.",
             f"The final solution set is: {solution}"
         ]
-        
         return {"solution": str(solution), "steps": steps}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not solve inequality: {str(e)}")
 
 
-# Serve static files (plots, latex images)
-# Note: In a real production setup, you'd use a CDN, but this is fine for Render.
 from fastapi.staticfiles import StaticFiles
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# To run this app locally:
-# 1. Make sure you have all packages from requirements.txt installed.
-# 2. Set the API_KEY environment variable (optional for local dev).
-# 3. Run: uvicorn app:app --reload
