@@ -1,21 +1,9 @@
-# Core dependencies with version locks for Python 3.11
 setuptools>=65.0.0
 wheel>=0.40.0
-pip>=23.0.0
-
-# FastAPI and server
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+fastapi==0.110.0
+uvicorn==0.24.0
 gunicorn==21.2.0
-python-multipart==0.0.6
-pydantic==2.5.0
-
-# Math and science libraries
 sympy==1.12
-numpy==1.24.3
-scipy==1.11.4
+numpy==1.24.4
 matplotlib==3.7.3
-seaborn==0.13.0
-
-# Additional for compatibility
-typing-extensions>=4.0.0
+python-dotenv==1.0.1
