@@ -1,7 +1,10 @@
-fastapi
-uvicorn[standard]
-gunicorn
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+gunicorn==21.2.0
 sympy==1.12
-numpy
-matplotlib
-python-dotenv
+numpy==1.24.3
+scipy==1.11.4
+matplotlib==3.7.3
+seaborn==0.13.0
+python-multipart==0.0.6
+pydantic==2.5.0
