@@ -1,23 +1,22 @@
 services:
   - type: web
-    name: mathwiz-api-v2
-    env: python
+    name: mathwiz-api
+    runtime: python
     plan: free
-    # Update this with your GitHub repo
-    repo: https://github.com/Sugamdeol/mathwiz-api
+    repo: https://github.com/YOUR_USERNAME/mathwiz-api
     branch: main
-    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
-    startCommand: "gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT app:app --timeout 120"
+    buildCommand: |
+      python --version
+      pip install --upgrade pip setuptools wheel
+      pip install -r requirements.txt
+    startCommand: "gunicorn -w 1 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT app:app --timeout 120 --preload"
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11"
+        value: "3.11.9"
       - key: API_KEY
         generateValue: true
       - key: MPLCONFIGDIR
         value: /tmp/matplotlib
-      - key: TMPDIR
-        value: /tmp
-      # Performance settings
-      - key: WEB_CONCURRENCY
-        value: "2"
+      - key: PORT
+        value: "10000"
