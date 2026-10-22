@@ -44,7 +44,7 @@ This project is configured for easy deployment on Render's free tier.
 
 1.  **Clone the repository**:
     ```bash
-    git clone https://github.com/YOUR_USERNAME/mathwiz-api.git
+    git clone https://github.com/Sugamdeol/mathwiz-api.git
     cd mathwiz-api
     ```
 2.  **Create a virtual environment**:
@@ -73,7 +73,7 @@ All endpoints require an `X-API-KEY` header for authentication.
 ### Example Request (`/evaluate`)
 
 ```bash
-curl -X POST "https://your-app-name.onrender.com/evaluate" \
+curl -X POST "https://math-wizard-api.onrender.com/evaluate" \
 -H "Content-Type: application/json" \
 -H "X-API-KEY: your-render-api-key" \
 -d '{
@@ -87,7 +87,7 @@ curl -X POST "https://your-app-name.onrender.com/evaluate" \
 ### Example Request (`/solve-equation`)
 
 ```bash
-curl -X POST "https://your-app-name.onrender.com/solve-equation" \
+curl -X POST "https://math-wizard-api.onrender.com/solve-equation" \
 -H "Content-Type: application/json" \
 -H "X-API-KEY: your-render-api-key" \
 -d '{
